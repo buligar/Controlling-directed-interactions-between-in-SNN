@@ -1,0 +1,2 @@
+# Per-run simulation caches; keep runs.csv and other aggregated results.
+runs/

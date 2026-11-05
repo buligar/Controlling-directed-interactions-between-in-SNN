@@ -1,0 +1,72 @@
+{
+  "schema": 7,
+  "base_config": {
+    "n_neurons": 50,
+    "duration": 10,
+    "fs": 100,
+    "frequency": 10.0,
+    "rhythm_amplitude": 25.0,
+    "coupling_delay": -0.04,
+    "intra_connection_probability": 0.15,
+    "inter_connection_probability": 0.05,
+    "synaptic_weight": 3,
+    "noise": 50.0,
+    "seed": 0,
+    "excitatory_fraction": 0.8,
+    "external_connection_probability": 0.3,
+    "external_weight": 3
+  },
+  "amplitudes_pA": [
+    0,
+    50,
+    100,
+    200
+  ],
+  "noises_hz": [
+    0,
+    10,
+    50,
+    100
+  ],
+  "delays_ms": [
+    -80,
+    -40,
+    -20,
+    0,
+    20,
+    40,
+    80
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "units": {
+    "rhythm_amplitude": "pA",
+    "noise": "Hz",
+    "synaptic_weight": "mV",
+    "coupling_delay": "s",
+    "external_weight": "mV"
+  },
+  "poisson_mean_compensated": true,
+  "analysis": {
+    "p_max": 20,
+    "criterion": "BIC",
+    "surrogates": 199,
+    "alpha": 0.05,
+    "surrogate_seed": 42,
+    "band_hz": [
+      8.0,
+      12.0
+    ]
+  },
+  "backend": "cython",
+  "source_hashes": {
+    "systematic_analysis.py": "e488a2d8151c6d184323991719ff7b529813217b85c74d2bd49b8522ddfc49a3",
+    "spike_population_brian2.py": "d012c8e59830fe4c7696e807b0496217e04632df244520102f7ded39484a3802",
+    "population_connectivity.py": "df7de891159fc7acb07c26e05b2f88436a3180b4c3eee408170cf671ca6c301f"
+  }
+}
