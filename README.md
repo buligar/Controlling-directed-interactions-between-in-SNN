@@ -1,24 +1,25 @@
 # Controlling directed interactions between spiking neural populations by changing external excitation
 
-Исследование направленных взаимодействий в сетях LIF-нейронов при изменении
-внешнего возбуждения и фиксированной топологии. Моделирование — Brian2,
-спектральные показатели — GC, PDC и DTF. Подробности: Б. Б. Батуев,
-С. В. Сухов, [текст статьи](article.pdf).
+This repository studies directed interactions in LIF neural networks under changing
+external excitation and fixed synaptic topology. Networks are simulated in Brian2
+and analyzed using spectral Granger causality (GC), partial directed coherence (PDC),
+and the directed transfer function (DTF). See the [paper](article.pdf)
+by B. B. Batuev and S. V. Sukhov for details.
 
-## Установка и запуск
+## Installation and usage
 
 ```bash
 python3 -m pip install numpy scipy matplotlib brian2 networkx cython
 ```
 
-Команды выполняются из корня репозитория. Для Cython нужен компилятор C/C++;
-в эксперименте 3 можно выбрать `--backend numpy` для работы без компиляции.
+Run commands from the repository root. Cython requires a C/C++ compiler;
+use `--backend numpy` in Experiment 3 to run without compilation.
 
-| Скрипт | Эксперимент |
+| Script | Experiment |
 | --- | --- |
-| [experiment1.py](experiment1.py) | Три популяции по 50 нейронов; переключение стимуляции 10 → 20 → 30 Гц, спектрограммы PDC |
-| [experiment2.py](experiment2.py) | Две популяции; отдельные переборы амплитуды и пуассоновского входа, 20 реализаций, бутстреп |
-| [experiment3/systematic_analysis.py](experiment3/systematic_analysis.py) | Перебор амплитуды, шума и задержки; 560 симуляций, анализ чисел спайков, фазовые суррогаты |
+| [experiment1.py](experiment1.py) | Three populations of 50 neurons; stimulation switches at 10 → 20 → 30 Hz, PDC spectrograms |
+| [experiment2.py](experiment2.py) | Two populations; separate sweeps of current amplitude and Poisson input rate, 20 realizations, bootstrap inference |
+| [experiment3/systematic_analysis.py](experiment3/systematic_analysis.py) | Amplitude, noise, and delay sweep; 560 simulations, spike count analysis, phase surrogates |
 
 ```bash
 python3 experiment1.py
@@ -26,70 +27,71 @@ python3 experiment2.py
 python3 experiment3/systematic_analysis.py --output-dir experiment3/direction_results
 ```
 
-Первый скрипт сохраняет рисунки в текущем каталоге, второй —
-в `results_brian2_var_style/`. Параметры экспериментов 1–2 задаются в коде,
-эксперимента 3 — аргументами командной строки (`--help`).
+The first script saves figures in the current directory; the second saves them
+in `results_brian2_var_style/`. Set parameters for Experiments 1–2 in the code
+and for Experiment 3 through command-line arguments (`--help`).
 
-Сохранённые результаты: [эксперимент 1](experiment1_results/),
-[эксперимент 2](experiment2_results/),
-[эксперимент 3](experiment3/experiment3_results/).
-Для перестроения шести карт достаточно `manifest.json` и `runs.csv`, без Brian2:
+Saved results: [Experiment 1](experiment1_results/),
+[Experiment 2](experiment2_results/),
+[Experiment 3](experiment3/experiment3_results/).
+Regenerate the six direction maps from `manifest.json` and `runs.csv` without Brian2:
 
 ```bash
 python3 experiment3/systematic_analysis.py --report-only \
   --output-dir experiment3/experiment3_results
 ```
 
-Кэш отдельных запусков в каталогах `runs/` исключён из Git.
-Для нового перебора с изменёнными настройками или кодом укажите новый `--output-dir`.
+Per-run caches in `runs/` directories are excluded from Git.
+Choose a new `--output-dir` when changing sweep settings or source code.
 
-## Рисунки из статьи
+## Figures from the paper
 
-Все восемь рисунков приведены в порядке статьи; PNG подготовлены из её исходных PDF.
+All eight figures appear in the same order as in the paper, converted from the original PDFs to PNG.
 
-**Рис. 1.** Переключение внешнего возбуждения трёх популяций.
+**Figure 1.** Switching external excitation among three populations.
 
-![Схема стимуляции трёх популяций](docs/figures/3population.png)
+![Stimulation protocol for three populations](docs/figures/3population.png)
 
-**Рис. 2.** Топология двухпопуляционной сети, типы нейронов и внешние проекции.
+**Figure 2.** Network topology, neuron types, and external projections for two populations.
 
-![Топология сети и пуассоновские источники](docs/figures/topology_seed_20261009.png)
+![Network topology and external Poisson sources](docs/figures/topology_seed_20261009.png)
 
-**Рис. 3.** Схема перебора амплитуды и интенсивности пуассоновского входа.
+**Figure 3.** Workflow for sweeping current amplitude and Poisson input rate.
 
-![Схема второго эксперимента](docs/figures/experiment_scheme.png)
+![Experiment 2 workflow](docs/figures/experiment_scheme.png)
 
-**Рис. 4.** Спектрограммы PDC при переключении стимуляции трёх популяций.
+**Figure 4.** PDC spectrograms during stimulation switching among three populations.
 
-![Матрица спектрограмм PDC](docs/figures/PDC_matrix_ru.png)
+![PDC spectrogram matrix](docs/figures/PDC_matrix_ru.png)
 
-**Рис. 5.** Знаковые пики асимметрии GC, PDC и DTF по 20 реализациям;
-заливка — доверительные полосы, звёзды — значимость после поправки Holm.
+**Figure 5.** Signed peaks of GC, PDC, and DTF asymmetry across 20 realizations;
+shading shows confidence bands, and stars indicate significance after Holm correction.
 
-![Асимметрия направлений при изменении амплитуды и шума](docs/figures/delta_signed_peak.png)
+![Directional asymmetry under amplitude and noise sweeps](docs/figures/delta_signed_peak.png)
 
-**Рис. 6.** Направленность GC: слева 0–50 Гц, справа 8–12 Гц;
-категория определяется большинством из пяти реализаций.
+**Figure 6.** GC directionality over 0–50 Hz (left) and 8–12 Hz (right);
+each category requires a strict majority of five realizations.
 
-![Карты направленности GC](docs/figures/delay_direction_GC.png)
+![GC direction maps](docs/figures/delay_direction_GC.png)
 
-**Рис. 7.** Направленность PDC в полном диапазоне и в полосе ритма.
+**Figure 7.** PDC directionality over the full frequency range and within the rhythm band.
 
-![Карты направленности PDC](docs/figures/delay_direction_PDC.png)
+![PDC direction maps](docs/figures/delay_direction_PDC.png)
 
-**Рис. 8.** Направленность DTF. Для используемых двухканальных нормировок
-DTF и PDC совпадают, поэтому совпадение карт не является независимым подтверждением.
+**Figure 8.** DTF directionality. With the bivariate normalizations used here,
+DTF and PDC coincide, so matching maps do not provide independent confirmation.
 
-![Карты направленности DTF](docs/figures/delay_direction_DTF.png)
+![DTF direction maps](docs/figures/delay_direction_DTF.png)
 
-## Интерпретация
+## Interpretation
 
-При усилении гармонического тока асимметрия PDC/DTF меняет знак, а GC сохраняет
-положительный знак. В третьем эксперименте направление в полосе 8–12 Гц
-преимущественно следует адресации достаточно сильного ритма.
+As harmonic current increases, PDC/DTF asymmetry reverses sign while GC asymmetry
+remains positive. In Experiment 3, sufficiently strong rhythmic input generally
+produces a predominant direction from the stimulated population to the other
+within the 8–12 Hz band.
 
-Метрики описывают статистические зависимости сигналов. Крайняя шумовая точка
-эксперимента 2 соответствует насыщению дискретного `PoissonGroup`;
-знак задержки в эксперименте 3 одновременно выбирает стимулируемую популяцию.
+These metrics describe statistical dependencies between signals. The highest noise
+level in Experiment 2 saturates the discrete `PoissonGroup` generator;
+the sign of the delay parameter in Experiment 3 also selects the stimulated population.
 
-Код: [GNU AGPL v3.0](LICENSE). Условия использования статьи указаны в [PDF](article.pdf).
+Code license: [GNU AGPL v3.0](LICENSE). The paper's licensing terms are stated in the [PDF](article.pdf).
