@@ -1,5 +1,5 @@
 {
-  "schema": 7,
+  "schema": 8,
   "base_config": {
     "n_neurons": 50,
     "duration": 10,
@@ -51,7 +51,13 @@
     "coupling_delay": "s",
     "external_weight": "mV"
   },
-  "poisson_mean_compensated": true,
+  "poisson_mean_compensated": false,
+  "drive": {
+    "waveform": "harmonic",
+    "amplitude_convention": "peak",
+    "phase_rad": 0.0
+  },
+  "burn_in_s": 0.0,
   "analysis": {
     "p_max": 20,
     "criterion": "BIC",
@@ -65,8 +71,8 @@
   },
   "backend": "cython",
   "source_hashes": {
-    "systematic_analysis.py": "e488a2d8151c6d184323991719ff7b529813217b85c74d2bd49b8522ddfc49a3",
-    "spike_population_brian2.py": "d012c8e59830fe4c7696e807b0496217e04632df244520102f7ded39484a3802",
+    "systematic_analysis.py": "0e7b12aa418b2a6e3f5af420eed611367d9113615d2844044c237e7e21051214",
+    "spike_population_brian2.py": "fdf003c9e562a9d1f72b13b530cc591a8091ec12295fde4ad42bc14135468e19",
     "population_connectivity.py": "df7de891159fc7acb07c26e05b2f88436a3180b4c3eee408170cf671ca6c301f"
   }
 }

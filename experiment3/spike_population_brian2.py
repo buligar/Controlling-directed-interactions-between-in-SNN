@@ -1,23 +1,21 @@
-"""Two LIF populations with stochastic rhythm, Poisson input and voltage jumps."""
+"""Two LIF populations with harmonic current, Poisson input and voltage jumps."""
 
 from dataclasses import dataclass
 
 import brian2 as b2
 import numpy as np
 from brian2.codegen.runtime.numpy_rt import NumpyCodeObject
-from scipy.signal import lfilter
 
 
 # Fixed LIF dynamics and recording settings; values use seconds, mV, pA, Mohm.
 INTEGRATION_DT = 0.0005
-RHYTHM_BANDWIDTH = 0.65
 RHYTHM_AMPLITUDE = 25.0
 RESISTANCE = 80.0
 TAU_M = 0.02
 V_REST = -65.0
 V_RESET = -70.0
 V_THRESHOLD = -50.0
-# Keep the existing rhythm and internal-topology stream positions.
+# Reserve the old rhythm slot so Poisson and topology streams keep their seeds.
 RANDOM_STREAM_NAMES = (
     "rhythm", "poisson", "inter", "recurrent_1", "recurrent_2", "external_1", "external_2",
 )
@@ -36,7 +34,7 @@ class LIFConfig:
     duration: float = 10.0
     fs: int = 100
     frequency: float = 10.0  # Hz
-    rhythm_amplitude: float = RHYTHM_AMPLITUDE  # pA; amplitude of the external rhythmic current
+    rhythm_amplitude: float = RHYTHM_AMPLITUDE  # pA; peak amplitude of the harmonic current
     coupling_delay: float = -0.04  # s; sign chooses the rhythm-driven population
     intra_connection_probability: float = 0.15
     inter_connection_probability: float = 0.05
@@ -110,12 +108,13 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     also has reciprocal recurrent synapses without self-connections and with zero
     propagation delay. The full topology does not depend on the delay sign.
 
-    An external stochastic 10 Hz current drives only the source. Each population has its own pool
+    A harmonic current A*sin(2*pi*f*t), with peak amplitude A and zero initial
+    phase, drives only the source. It is evaluated at every integration step.
+    Each population has its own pool
     of n external Poisson sources, randomly connected with probability 0.3 by
     default. A source can send the same event to several neurons in its own
-    population; the two pools are independent. The Poisson mean is subtracted
-    from each neuron's DC current using its actual external in-degree, keeping
-    the mean external drive equal to tonic_current when the source rate changes.
+    population; the two pools are independent. There is no DC current or
+    compensation of the Poisson mean.
     There is no Gaussian membrane noise. All synapses change voltage
     instantaneously, and the reset to -70 mV has no refractory period.
     The NumPy and Cython backends run the same equations with their own
@@ -137,32 +136,17 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     target = 1 - source
 
     delay = round(abs(config.coupling_delay) / INTEGRATION_DT) * INTEGRATION_DT
-
-    # Input current is supplied through TimedArray; neural and synaptic dynamics
-    # below are integrated by Brian2. Stationary prehistory initializes the input
-    # oscillator without adding simulation time to the neural network.
-    input_length = int(np.ceil(total_duration * config.fs))
-    radius = np.exp(-np.pi * RHYTHM_BANDWIDTH / config.fs)
-    if radius == 1:
-        raise ValueError("rhythm_bandwidth is too small for a stable input oscillator.")
-    oscillator = max(20 * config.fs, int(np.ceil(10 / (1 - radius))))
-    innovations = np.random.default_rng(streams["rhythm"]).normal(size=input_length + oscillator)
-    rhythm = lfilter(
-        [1], [1, -2 * radius * np.cos(2 * np.pi * config.frequency / config.fs), radius**2],
-        innovations,
-    )[oscillator:]
-    rhythm /= rhythm.std()
-    rhythm_input = b2.TimedArray(rhythm, dt=b2.second / config.fs)
+    print("delay", delay)
     clock = b2.Clock(dt=INTEGRATION_DT * b2.second)
     namespace = dict(
         v_rest=V_REST * b2.mV, v_reset=V_RESET * b2.mV,
         v_threshold=V_THRESHOLD * b2.mV, resistance=RESISTANCE * b2.Mohm,
         tau_m=TAU_M * b2.second,
-        rhythm_input=rhythm_input,
+        drive_frequency=config.frequency * b2.Hz,
     )
     equations = """
     dv/dt = (v_rest - v + resistance*I_drive)/tau_m : volt
-    I_drive = rhythm_amplitude*rhythm_input(t) : amp
+    I_drive = rhythm_amplitude*sin(2*pi*drive_frequency*t) : amp
     rhythm_amplitude : amp
     """
     b2.seed(int(streams["poisson"].generate_state(1)[0]))
@@ -198,9 +182,6 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
         projection.delay = 0 * b2.second
         projection.pre.order = -2  # External events precede internal synaptic events.
         external_synapses.append(projection)
-        # A voltage jump J repeated at rate K*r contributes tau_m*K*r*J
-        # to the mean subthreshold voltage. Compensate using each neuron's K.
-        degree = np.bincount(post, minlength=n)
 
     def create_synapses(source_population, target_population, pre, post, delays, name):
         if not pre.size:

@@ -104,7 +104,8 @@ def save_figure(result, config, path):
                 axis.set_ylabel("Частота, Гц")
         figure.colorbar(mesh, ax=axes[:, column], label=metric, shrink=.9)
     figure.suptitle(
-        f"A = {config.rhythm_amplitude:g} пА, задержка = {1000*config.coupling_delay:g} мс, "
+        f"Гармонический ток: A = {config.rhythm_amplitude:g} пА, "
+        f"задержка = {1000*config.coupling_delay:g} мс, "
         f"пуассоновский вход = {config.noise:g} Гц, seed = {config.seed}\n"
         f"Числа спайков; BIC: VAR({result.order}); окно {result.window_s:g} с, "
         f"шаг {result.step_s:g} с; общая нормировка по записи")
@@ -114,7 +115,8 @@ def save_figure(result, config, path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--amplitude", type=float, default=200, help="Rhythmic current amplitude, pA.")
+    parser.add_argument("--amplitude", type=float, default=200,
+                        help="Peak amplitude of the harmonic current, pA.")
     parser.add_argument("--delay-ms", type=float, default=40)
     parser.add_argument("--noise", type=float, default=50, help="Rate of each external Poisson source, Hz.")
     parser.add_argument("--seed", type=int, default=0)
@@ -123,7 +125,7 @@ def main(argv=None):
     parser.add_argument("--step", type=float, default=0.16)
     parser.add_argument("--p-max", type=int, default=20)
     parser.add_argument("--backend", choices=("cython", "numpy"), default="cython")
-    parser.add_argument("--output-dir", type=Path, default=BASE/"direction_results")
+    parser.add_argument("--output-dir", type=Path, default=BASE/"direction_results_harmonic")
     args = parser.parse_args(argv)
 
     if __package__:
@@ -138,7 +140,7 @@ def main(argv=None):
         parser.error(str(error))
     if args.backend == "cython":
         import brian2 as b2
-        b2.prefs.codegen.runtime.cython.cache_dir = "/tmp/brian2_v3_target_spectrogram_cython"
+        b2.prefs.codegen.runtime.cython.cache_dir = "/tmp/brian2_v3_harmonic_spectrogram_cython"
     print(f"Симуляция: {args.amplitude:g} пА, {args.delay_ms:g} мс, "
           f"вход {args.noise:g} Гц, seed={args.seed}, запись {args.duration:g} с.", flush=True)
     counts = simulate_lif_populations(config, backend=args.backend)
@@ -148,7 +150,8 @@ def main(argv=None):
     output.mkdir(parents=True, exist_ok=True)
     stem = (f"spectrogram_{args.amplitude:g}pA_delay_{args.delay_ms:g}ms_"
             f"noise_{args.noise:g}Hz_seed{args.seed}")
-    metadata = dict(config=asdict(config), backend=args.backend,
+    metadata = dict(config=asdict(config), backend=args.backend, burn_in_s=0.0,
+                    drive=dict(waveform="harmonic", amplitude_convention="peak", phase_rad=0.0),
                     signal="binned_spike_counts", normalization="record_zscore",
                     order_criterion="BIC", order=result.order, p_max=args.p_max,
                     window_s=result.window_s, step_s=result.step_s,

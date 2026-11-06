@@ -29,7 +29,8 @@ else:
 
 
 BASE = Path(__file__).resolve().parent
-SCHEMA = 7
+SCHEMA = 8
+HARMONIC_DRIVE = dict(waveform="harmonic", amplitude_convention="peak", phase_rad=0.0)
 ROW_FIELDS = (
     "amplitude_pA", "noise_hz", "delay_ms", "seed", "metric",
     "outcome_code", "band_outcome_code",
@@ -60,6 +61,7 @@ def make_plan(base, amplitudes, noises, delays_ms, seeds, analysis, provenance, 
                     metadata = dict(
                         schema=SCHEMA, config=asdict(config), analysis=analysis,
                         source_hashes=provenance, backend=backend,
+                        drive=HARMONIC_DRIVE, burn_in_s=0.0,
                     )
                     identity = hashlib.sha256(canonical_json(metadata).encode()).hexdigest()[:20]
                     jobs.append(dict(id=identity, metadata=metadata, delay_ms=float(delay)))
@@ -153,7 +155,8 @@ def read_rows(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--amplitudes", type=float, nargs="+", default=[0, 50, 100, 200])
+    parser.add_argument("--amplitudes", type=float, nargs="+", default=[0, 50, 100, 200],
+                        help="Peak amplitudes of the harmonic current, pA.")
     parser.add_argument("--noises", type=float, nargs="+", default=[0, 10, 50, 100],
                         help="Rate of each external Poisson source, Hz.")
     parser.add_argument("--delays-ms", type=float, nargs="+", default=[-80, -40, -20, 0, 20, 40, 80])
@@ -170,7 +173,7 @@ def main(argv=None):
     parser.add_argument("--p-max", type=int, default=20)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--backend", choices=("cython", "numpy"), default="cython")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "direction_results")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "direction_results_harmonic_v2")
     parser.add_argument("--report-only", action="store_true",
                         help="Redraw only the six maps using saved manifest.json and runs.csv.")
     args = parser.parse_args(argv)
@@ -224,7 +227,7 @@ def main(argv=None):
         noises_hz=args.noises, delays_ms=args.delays_ms, seeds=args.seeds,
         units=dict(rhythm_amplitude="pA", noise="Hz", synaptic_weight="mV",
                    coupling_delay="s", external_weight="mV",),
-        poisson_mean_compensated=True,
+        poisson_mean_compensated=False, drive=HARMONIC_DRIVE, burn_in_s=0.0,
         analysis=analysis, backend=args.backend, source_hashes=provenance,
     )
     output.mkdir(parents=True, exist_ok=True)
@@ -235,7 +238,7 @@ def main(argv=None):
     missing = [job for job in jobs if not (output / "runs" / (job["id"] + ".npz")).exists()]
     print(f"{len(jobs)} simulations; {len(missing)} missing.", flush=True)
     if missing:
-        cache = Path("/tmp/brian2_v3_sweep_cython")
+        cache = Path("/tmp/brian2_v3_harmonic_sweep_cython")
         cache.mkdir(exist_ok=True)
         with ProcessPoolExecutor(
             max_workers=args.workers, mp_context=multiprocessing.get_context("spawn"),
