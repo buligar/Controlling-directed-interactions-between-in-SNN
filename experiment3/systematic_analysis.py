@@ -173,7 +173,7 @@ def main(argv=None):
     parser.add_argument("--p-max", type=int, default=20)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--backend", choices=("cython", "numpy"), default="cython")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "direction_results_harmonic_v2")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "experiment3_results")
     parser.add_argument("--report-only", action="store_true",
                         help="Redraw only the six maps using saved manifest.json and runs.csv.")
     args = parser.parse_args(argv)

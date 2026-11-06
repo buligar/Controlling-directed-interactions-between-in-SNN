@@ -7,8 +7,8 @@ import numpy as np
 
 METRICS = ("GC", "PDC", "DTF")
 OUTCOMES = (
-    "Нет значимости", "Только 1 → 2", "Только 2 → 1", "Оба направления",
-    "Не оценивается", "Нет единого большинства",
+    "no significance", "only 1 → 2", "only 2 → 1", "both directions",
+    "not estimable", "no clear majority",
 )
 
 
@@ -52,7 +52,7 @@ def plot_direction_maps(output, manifest, rows):
             )
             axes = axes[0]
             for amplitude, axis in zip(amplitudes, axes):
-                axis.set_xlabel(f"coupling_delay, мс\nАмплитуда {amplitude:g} пА")
+                axis.set_xlabel(f"coupling_delay, ms\nAmplitude {amplitude:g} pA")
                 axis.set_xticks(range(len(delays)), [f"{d:g}" for d in delays])
                 axis.set_yticks(range(len(noises)), [f"{v:g}" for v in noises])
                 codes = np.empty((len(noises), len(delays)), dtype=int)
@@ -63,11 +63,11 @@ def plot_direction_maps(output, manifest, rows):
                         winners = [code for code, count in counts.items() if count > len(samples)/2]
                         code = winners[0] if winners else 5
                         codes[i, j] = code
-                        text = f"{counts[code]}/{len(samples)}" if code < 5 else "смесь"
+                        text = f"{counts[code]}/{len(samples)}" if code < 5 else "mixture"
                         axis.text(j, i, text, ha="center", va="center", fontsize=8,
                                   color="white" if code in (1, 3, 4) else "black")
                 axis.imshow(codes, cmap=cmap, norm=norm, aspect="auto", interpolation="nearest")
-            axes[0].set_ylabel("Частота пуассоновского входа, Гц" if poisson else "Шум, мВ")
+            axes[0].set_ylabel("Poisson frequency, Hz" if poisson else "Noise, mV")
             figure.legend(
                 handles=[Patch(facecolor=c, label=label) for c, label in zip(colors, OUTCOMES)],
                 loc="outside lower center", ncols=3, fontsize=9,
