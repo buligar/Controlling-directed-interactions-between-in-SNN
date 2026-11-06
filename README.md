@@ -174,16 +174,16 @@ shading shows confidence bands, and stars indicate significance after Holm corre
 **Figure 6.** GC directionality over 0–50 Hz (left) and 8–12 Hz (right);
 each category requires a strict majority of five realizations.
 
-![GC direction maps](docs/figures/delay_direction_GC.png)
+![GC direction maps](docs/figures/delay_direction_GC.pdf)
 
 **Figure 7.** PDC directionality over the full frequency range and within the rhythm band.
 
-![PDC direction maps](docs/figures/delay_direction_PDC.png)
+![PDC direction maps](docs/figures/delay_direction_PDC.pdf)
 
 **Figure 8.** DTF directionality. With the bivariate normalizations used here,
 DTF and PDC coincide, so matching maps do not provide independent confirmation.
 
-![DTF direction maps](docs/figures/delay_direction_DTF.png)
+![DTF direction maps](docs/figures/delay_direction_DTF.pdf)
 
 ## Interpretation
 
