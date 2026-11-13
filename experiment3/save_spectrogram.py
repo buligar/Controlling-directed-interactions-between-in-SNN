@@ -1,4 +1,4 @@
-"""Save windowed GC/PDC/DTF for one LIF condition using connectivity_spectra."""
+"""Save network topology and windowed GC/PDC/DTF for one LIF condition."""
 
 from __future__ import annotations
 
@@ -23,6 +23,14 @@ else:
 
 BASE = Path(__file__).resolve().parent
 METRICS = ("GC", "PDC", "DTF")
+FIGURE_FONT_SIZES = {
+    "font.size": 16,
+    "axes.labelsize": 18,
+    "axes.titlesize": 18,
+    "figure.titlesize": 20,
+    "xtick.labelsize": 16,
+    "ytick.labelsize": 16,
+}
 
 
 @dataclass(frozen=True)
@@ -78,54 +86,97 @@ def compute_spectrogram(counts, fs, *, window_s=2., step_s=.16, p_max=20):
                        order, window/fs, step/fs)
 
 
-def save_figure(result, config, path):
+def save_figure(result, config, path, *, merge_pdc_dtf=False):
     import matplotlib.pyplot as plt
 
-    figure, axes = plt.subplots(2, 3, figsize=(15, 7), sharex=True, sharey=True,
-                                constrained_layout=True)
-    for column, metric in enumerate(METRICS):
-        data = result.measures[metric]
-        finite = data[np.isfinite(data)]
-        maximum = max(float(finite.max()), np.finfo(float).eps)
-        for direction, label in enumerate(("1 → 2", "2 → 1")):
-            axis = axes[direction, column]
-            # Explicit time edges also support records with only one full window.
-            time_edges = np.r_[result.times-result.step_s/2, result.times[-1]+result.step_s/2]
-            df = result.frequencies[1]-result.frequencies[0]
-            frequency_edges = np.r_[result.frequencies-df/2, result.frequencies[-1]+df/2]
-            mesh = axis.pcolormesh(time_edges, frequency_edges,
-                                   np.ma.masked_invalid(data[:, direction].T),
-                                   shading="flat", cmap="turbo", vmin=0, vmax=maximum)
-            axis.axhline(config.frequency, color="black", linewidth=.6, alpha=.5)
-            axis.set(title=f"{metric}: {label}", xlim=(time_edges[0], time_edges[-1]), ylim=(0, config.fs/2))
-            if direction == 1:
-                axis.set_xlabel("Время от начала симуляции, с")
-            if column == 0:
-                axis.set_ylabel("Частота, Гц")
-        figure.colorbar(mesh, ax=axes[:, column], label=metric, shrink=.9)
-    figure.suptitle(
-        f"Гармонический ток: A = {config.rhythm_amplitude:g} пА, "
-        f"задержка = {1000*config.coupling_delay:g} мс, "
-        f"пуассоновский вход = {config.noise:g} Гц, seed = {config.seed}\n"
-        f"Числа спайков; BIC: VAR({result.order}); окно {result.window_s:g} с, "
-        f"шаг {result.step_s:g} с; общая нормировка по записи")
-    figure.savefig(path, dpi=190)
-    plt.close(figure)
+    if merge_pdc_dtf:
+        if not np.allclose(result.measures["PDC"], result.measures["DTF"],
+                           rtol=1e-10, atol=1e-12, equal_nan=True):
+            raise ValueError("PDC and DTF differ; they cannot share one panel.")
+        columns = (("GC", "GC"), ("PDC", "PDC/DTF"))
+    else:
+        columns = tuple((metric, metric) for metric in METRICS)
+
+    with plt.rc_context(FIGURE_FONT_SIZES):
+        figure, axes = plt.subplots(2, len(columns),
+                                    figsize=(12, 6) if merge_pdc_dtf else (15, 7),
+                                    sharex=True, sharey=True,
+                                    constrained_layout=True)
+        for column, (metric, display_name) in enumerate(columns):
+            data = result.measures[metric]
+            finite = data[np.isfinite(data)]
+            maximum = max(float(finite.max()), np.finfo(float).eps)
+            for direction, label in enumerate(("1 → 2", "2 → 1")):
+                axis = axes[direction, column]
+                # Explicit time edges also support records with only one full window.
+                time_edges = np.r_[result.times-result.step_s/2, result.times[-1]+result.step_s/2]
+                df = result.frequencies[1]-result.frequencies[0]
+                frequency_edges = np.r_[result.frequencies-df/2, result.frequencies[-1]+df/2]
+                mesh = axis.pcolormesh(time_edges, frequency_edges,
+                                       np.ma.masked_invalid(data[:, direction].T),
+                                       shading="flat", cmap="turbo", vmin=0, vmax=maximum)
+                axis.axhline(config.frequency, color="black", linewidth=.6, alpha=.5)
+                axis.set(title=f"{display_name}: {label}", xlim=(time_edges[0], time_edges[-1]), ylim=(0, config.fs/2))
+                if direction == 1:
+                    axis.set_xlabel("Time, s")
+                if column == 0:
+                    axis.set_ylabel("Frequency, Hz")
+            figure.colorbar(mesh, ax=axes[:, column], label=display_name, shrink=.9)
+        inter_weight = config.synaptic_weight if config.inter_weight is None else config.inter_weight
+        if inter_weight == 0:
+            title = "Without interpopulation connections"
+        else:
+            title = ("With interpopulation connections, "
+                     rf"$w_{{\mathrm{{inter}}}}={inter_weight:g}$ mV")
+        figure.suptitle(title)
+        figure.savefig(path, dpi=190)
+        plt.close(figure)
+
+
+def save_topology_figure(signed, config, path, *, panel_label=None):
+    """Save only the internal E/I weight matrix and connection probabilities."""
+    import matplotlib.pyplot as plt
+
+    n = config.n_neurons
+    with plt.rc_context(FIGURE_FONT_SIZES):
+        figure, axis = plt.subplots(figsize=(8, 7), constrained_layout=True)
+        limit = float(np.max(np.abs(signed))) or 1.0
+        image = axis.imshow(signed, cmap="RdBu", vmin=-limit, vmax=limit)
+        axis.set_title(rf"$p_{{\mathrm{{intra}}}}={config.intra_connection_probability:g},\quad "
+                       rf"p_{{\mathrm{{inter}}}}={config.inter_connection_probability:g}$")
+        if panel_label is not None:
+            axis.text(0, 1.02, f"({panel_label})", transform=axis.transAxes,
+                      ha="left", va="bottom", fontsize=18, fontweight="bold")
+        axis.set_xlabel("Postsynaptic neuron")
+        axis.set_ylabel("Presynaptic neuron")
+        figure.colorbar(image, ax=axis, shrink=.8, label="Synaptic weight, mV")
+        axis.axhline(n-.5, color="0.25", linestyle="--", lw=1)
+        axis.axvline(n-.5, color="0.25", linestyle="--", lw=1)
+        figure.savefig(path, dpi=190, bbox_inches="tight")
+        plt.close(figure)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--amplitude", type=float, default=200,
                         help="Peak amplitude of the harmonic current, pA.")
-    parser.add_argument("--delay-ms", type=float, default=40)
+    parser.add_argument("--delay-ms", type=float, default=20)
     parser.add_argument("--noise", type=float, default=50, help="Rate of each external Poisson source, Hz.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--duration", type=float, default=10)
+    parser.add_argument("--weight", type=float, default=3,
+                        help="Default internal synaptic voltage jump, mV.")
+    parser.add_argument("--intra-weight", type=float, default=3,
+                        help="Recurrent voltage jump, mV; defaults to --weight. 0 disables these synapses.")
+    parser.add_argument("--inter-weight", type=float, default=3,
+                        help="Interpopulation voltage jump, mV; defaults to --weight. 0 disables these synapses.")
+    parser.add_argument("--external-weight", type=float, default=3,
+                        help="External Poisson voltage jump, mV. 0 disables these synapses.")
     parser.add_argument("--window", type=float, default=2)
     parser.add_argument("--step", type=float, default=0.16)
     parser.add_argument("--p-max", type=int, default=20)
     parser.add_argument("--backend", choices=("cython", "numpy"), default="cython")
-    parser.add_argument("--output-dir", type=Path, default=BASE/"direction_results_harmonic")
+    parser.add_argument("--output-dir", type=Path, default=BASE/"direction_results_harmonic_inter_3")
     args = parser.parse_args(argv)
 
     if __package__:
@@ -133,21 +184,28 @@ def main(argv=None):
     else:
         from spike_population_brian2 import LIFConfig, _validate, simulate_lif_populations
     config = LIFConfig(rhythm_amplitude=args.amplitude, coupling_delay=args.delay_ms/1000,
-                       noise=args.noise, duration=args.duration, seed=args.seed)
+                       noise=args.noise, duration=args.duration, seed=args.seed,
+                       synaptic_weight=args.weight, intra_weight=args.intra_weight,
+                       inter_weight=args.inter_weight, external_weight=args.external_weight)
     try:
         _validate(config)
     except ValueError as error:
         parser.error(str(error))
+    output = args.output_dir.resolve()
+    output.mkdir(parents=True, exist_ok=True)
     if args.backend == "cython":
         import brian2 as b2
         b2.prefs.codegen.runtime.cython.cache_dir = "/tmp/brian2_v3_harmonic_spectrogram_cython"
     print(f"Симуляция: {args.amplitude:g} пА, {args.delay_ms:g} мс, "
           f"вход {args.noise:g} Гц, seed={args.seed}, запись {args.duration:g} с.", flush=True)
-    counts = simulate_lif_populations(config, backend=args.backend)
+    counts, signed, external = simulate_lif_populations(
+        config, backend=args.backend, return_topology=True,
+    )
+    topology_path = output / f"topology_seed_{config.seed}.png"
+    save_topology_figure(signed, config, topology_path)
+    print(f"Топология сохранена: {topology_path}", flush=True)
     result = compute_spectrogram(counts, config.fs, window_s=args.window, step_s=args.step,
                                  p_max=args.p_max)
-    output = args.output_dir.resolve()
-    output.mkdir(parents=True, exist_ok=True)
     stem = (f"spectrogram_{args.amplitude:g}pA_delay_{args.delay_ms:g}ms_"
             f"noise_{args.noise:g}Hz_seed{args.seed}")
     metadata = dict(config=asdict(config), backend=args.backend, burn_in_s=0.0,
@@ -162,7 +220,8 @@ def main(argv=None):
                                                 "save_spectrogram.py")})
     np.savez_compressed(output/(stem+".npz"), metadata_json=json.dumps(metadata, ensure_ascii=False),
                         counts=counts, times=result.times, frequencies=result.frequencies,
-                        errors=result.errors, **result.measures)
+                        errors=result.errors, synaptic_weights=signed,
+                        external_weights=external, **result.measures)
     path = output/(stem+".png")
     save_figure(result, config, path)
     print(f"VAR({result.order}), допустимых окон: {np.count_nonzero(result.errors == '')}"

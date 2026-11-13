@@ -1,7 +1,9 @@
 """
 Амплитуда меняется в кластере 1, интенсивность пуассоновского шума — в кластере 2.
 Для каждого seed все уровни используют одну топологию и одни случайные числа.
+Анализ использует весь сигнал с начала моделирования, без отбрасывания участка.
 PLOT_TOPOLOGY/PLOT_SPECTRA/PLOT_SPIKES включают графики; SHOW_PLOTS — окна.
+Для каждой топологии выводится число рёбер графа и направленных синапсов матрицы.
 """
 
 # True — показывать окна Matplotlib, False — только сохранять PNG.
@@ -27,7 +29,6 @@ seed_start = 20261009
 t_total_sim = 10.0
 dt_sim = 0.01
 sampling_frequency = 100.0
-discard = 1.0
 n_cluster = 50
 BASE_AMPLITUDE = 100.0
 SWEEP_AMPLITUDE = 100.0
@@ -39,7 +40,9 @@ resistance = 0.08
 rest = -65.0
 threshold = -50.0
 reset = -70.0
-jump = 3.0
+jump = 3.0        # Внешний пуассоновский вход, мВ
+jump_intra = 3  # Модуль веса внутрипопуляционных синапсов, мВ
+jump_cross = 0.0  # Модуль веса межпопуляционных синапсов, мВ
 p_intra = 0.15
 p_cross = 0.05
 p_external = 0.3
@@ -61,7 +64,7 @@ min_valid = 0.6  # Минимальная доля допустимых окон
 n_neurons = 2 * n_cluster
 
 # Каталог результатов и настройки дополнительных графиков
-out = Path('results_brian2_var_style')
+out = Path('results_brian2_j_0')
 PLOT_TOPOLOGY = True
 PLOT_SPECTRA = True
 PLOT_SPIKES = True
@@ -84,20 +87,62 @@ prefs.codegen.target = 'numpy'
 
 # Связи внутри кластеров и между кластерами, возбуждающие и тормозные нейроны
 def make_topology(seed):
-    """Undirected SBM -> reciprocal, signed E/I synapses, as in the originals."""
+    """Взаимные E/I-синапсы с отдельными весами внутри и между популяциями."""
     rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
     n = 2 * n_cluster
     block = np.arange(n) // n_cluster
-    probability = np.where(block[:, None] == block[None, :], p_intra, p_cross)
+    same_population = block[:, None] == block[None, :]
+    probability = np.where(same_population, p_intra, p_cross)
     upper = np.triu(rng.random((n, n)) < probability, 1)
     adjacent = upper | upper.T
     is_exc = np.arange(n) % n_cluster < round(excitatory_fraction * n_cluster)
-    signed = adjacent.astype(float) * np.where(is_exc[:, None], jump, -jump)
+    magnitude = np.where(same_population, jump_intra, jump_cross)
+    signed = adjacent * magnitude * np.where(is_exc[:, None], 1., -1.)
     external = rng.random((n, n_cluster)) < p_external
     ext_full = np.zeros((n, n), float)
     ext_full[:n_cluster, :n_cluster] = external[:n_cluster] * jump
     ext_full[n_cluster:, n_cluster:] = external[n_cluster:] * jump
     return (signed, ext_full)
+
+
+def count_topology_connections(signed):
+    """Рёбра графа и ненулевые элементы матрицы внутренних синапсов.
+
+    На графе встречная пара считается одним ребром; в матрице каждый
+    направленный синапс считается отдельно, независимо от знака веса.
+    """
+    connected = np.asarray(signed) != 0
+    graph_edges = np.triu(connected | connected.T, 1)
+    counts = {}
+    for name, mask in (('graph', graph_edges), ('matrix', connected)):
+        intra_1 = int(np.count_nonzero(mask[:n_cluster, :n_cluster]))
+        intra_2 = int(np.count_nonzero(mask[n_cluster:, n_cluster:]))
+        cross = int(np.count_nonzero(mask[:n_cluster, n_cluster:]) +
+                    np.count_nonzero(mask[n_cluster:, :n_cluster]))
+        counts[name] = dict(intra_1=intra_1, intra_2=intra_2,
+                            intra=intra_1 + intra_2, cross=cross,
+                            total=intra_1 + intra_2 + cross)
+    return counts
+
+
+def print_topology_connections(signed, simulation_seed):
+    """Показать фактические числа связей для одной реализации сети."""
+    counts = count_topology_connections(signed)
+    graph, matrix = counts['graph'], counts['matrix']
+    print(f'\nСвязи сети, seed = {simulation_seed}:\n'
+          f'{"Тип связей":<25} {"p":>6} {"Рёбра графа":>13} {"Синапсы матрицы":>17}',
+          flush=True)
+    for label, probability, key in (
+            ('Внутри популяции 1', p_intra, 'intra_1'),
+            ('Внутри популяции 2', p_intra, 'intra_2'),
+            ('Внутри популяций, сумма', p_intra, 'intra'),
+            ('Между популяциями', p_cross, 'cross')):
+        print(f'{label:<25} {probability:>6g} {graph[key]:>13d} {matrix[key]:>17d}',
+              flush=True)
+    print(f'{"Всего":<25} {"—":>6} {graph["total"]:>13d} {matrix["total"]:>17d}\n'
+          'Один ненулевой элемент матрицы = один синапс; '
+          'одно ребро графа = два встречных синапса.', flush=True)
+
 
 # Моделирование потенциалов в Brian2
 def lif_simulate(simulation_seed, signed, external, amplitudes, rates, record_spikes=False):
@@ -132,28 +177,34 @@ def lif_simulate(simulation_seed, signed, external, amplitudes, rates, record_sp
     neurons.v = rest * mV
     neurons.amplitude = amplitudes * pA
     inputs = PoissonGroup(n, rates=rates * Hz, clock=clock)
-    external_synapses = Synapses(inputs, neurons, 
-                                 'weight : volt', 
-                                 on_pre='v_post += weight',
-                                 clock=clock)
+    network = Network(neurons, inputs)
+    # Нулевые веса (jump/jump_intra/jump_cross) не создают синапсов.
     pre, post = np.nonzero(external)
-    external_synapses.connect(i=pre, j=post)
-    external_synapses.weight = external[pre, post] * mV
-    recurrent_synapses = Synapses(neurons, neurons, 
-                                  'weight : volt', 
-                                  on_pre='v_post += weight', 
-                                  clock=clock)
+    if pre.size:
+        external_synapses = Synapses(inputs, neurons,
+                                     'weight : volt',
+                                     on_pre='v_post += weight',
+                                     clock=clock)
+        external_synapses.connect(i=pre, j=post)
+        external_synapses.weight = external[pre, post] * mV
+        external_synapses.pre.order = -2
+        network.add(external_synapses)
     pre, post = np.nonzero(signed)
-    recurrent_synapses.connect(i=pre, j=post)
-    recurrent_synapses.weight = signed[pre, post] * mV
-    external_synapses.pre.order = -2
-    recurrent_synapses.pre.order = -1
+    if pre.size:
+        recurrent_synapses = Synapses(neurons, neurons,
+                                      'weight : volt',
+                                      on_pre='v_post += weight',
+                                      clock=clock)
+        recurrent_synapses.connect(i=pre, j=post)
+        recurrent_synapses.weight = signed[pre, post] * mV
+        recurrent_synapses.pre.order = -1
+        network.add(recurrent_synapses)
     monitor = StateMonitor(neurons, 
                            'v', 
                            record=True, 
                            dt=1 / sampling_frequency * second, 
                            when='start')
-    network = Network(neurons, inputs, external_synapses, recurrent_synapses, monitor)
+    network.add(monitor)
     if record_spikes:
         spike_monitor = SpikeMonitor(neurons)
         network.add(spike_monitor)
@@ -317,11 +368,10 @@ def slide_2x2(v, i, j, order, freqs, fs, win_len=50, step=16, ridge=1e-3):
 
 # Расчёт спектров в скользящих окнах
 def analyze_trace(trace, order, freqs):
-    y = trace[round(discard * sampling_frequency):]
     gc_12, dtf_12, pdc_12, _ = slide_2x2(
-        y, 1, 0, order, freqs, sampling_frequency, win_len, step, var_ridge)
+        trace, 1, 0, order, freqs, sampling_frequency, win_len, step, var_ridge)
     gc_21, dtf_21, pdc_21, _ = slide_2x2(
-        y, 0, 1, order, freqs, sampling_frequency, win_len, step, var_ridge)
+        trace, 0, 1, order, freqs, sampling_frequency, win_len, step, var_ridge)
     maps = np.stack([np.stack([gc_12, gc_21], axis=1),
                      np.stack([pdc_12, pdc_21], axis=1),
                      np.stack([dtf_12, dtf_21], axis=1)], axis=1).transpose(3, 1, 2, 0)
@@ -343,6 +393,8 @@ def save_plot(fig, path):
 
 def plot_topology(signed, external, simulation_seed):
     """Граф взаимных связей, знаковые веса E/I и внешние проекции."""
+    counts = count_topology_connections(signed)
+    graph, matrix = counts['graph'], counts['matrix']
     n = signed.shape[0]
     angles = np.linspace(0, 2 * np.pi, n_cluster, endpoint=False)
     ring = np.column_stack((np.cos(angles), np.sin(angles)))
@@ -361,13 +413,17 @@ def plot_topology(signed, external, simulation_seed):
                                (~is_exc, '#c62828', 'I: inhibitory')):
         ax.scatter(*positions[take].T, s=28, color=color, label=label, zorder=3)
     ax.set(xlim=(-2.9, 2.9), ylim=(-1.5, 1.5), aspect='equal')
-    ax.set_title('Graph of network\n')
+    ax.set_title(f'Graph: {graph["total"]} edges\n'
+                 f'Intra (p={p_intra:g}): {graph["intra"]}\n'
+                 f'Inter (p={p_cross:g}): {graph["cross"]}')
     ax.legend(loc='lower center', bbox_to_anchor=(.5, -.2), frameon=False)
     ax.axis('off')
 
     limit = float(np.max(np.abs(signed))) or 1.0
     im = axes[1].imshow(signed, cmap='RdBu', vmin=-limit, vmax=limit)
-    axes[1].set_title(f'Topology:' f'p_intra = {p_intra:g}, p_inter = {p_cross:g}')
+    axes[1].set_title(f'Matrix: {matrix["total"]} synapses\n'
+                      f'Intra (p={p_intra:g}): {matrix["intra"]}\n'
+                      f'Inter (p={p_cross:g}): {matrix["cross"]}')
     axes[1].set_xlabel('Postsynaptic neuron')
     axes[1].set_ylabel('Presynaptic neuron')
     fig.colorbar(im, ax=axes[1], shrink=.8, label='Synaptic weight, mV')
@@ -395,7 +451,6 @@ def plot_spikes(spike_times, spike_indices, simulation_seed, sweep, factor):
         ax.scatter(spike_times[take], spike_indices[take], marker='|', s=24,
                    linewidths=.7, color=color)
     ax.axhline(n_cluster - .5, color='0.35', linestyle='--', lw=1)
-    analysis_start = round(discard * sampling_frequency) / sampling_frequency
     if len(spike_times) == 0:
         ax.text(.5, .5, 'Spike events not registered', transform=ax.transAxes,
                 ha='center', va='center', color='0.4')
@@ -426,9 +481,8 @@ def plot_connectivity_maps(values, freqs, simulation_seed, sweep, factor, var_or
     """Карты обоих направлений: values[окно, метрика, направление, частота]."""
     if values.shape[0] == 0 or len(freqs) == 0:
         raise ValueError('Для карт GC/PDC/DTF нужны хотя бы одно окно и одна частота.')
-    # Время отсчитывается от начала моделирования, с учётом отброшенного участка.
-    times = (round(discard * sampling_frequency) +
-             np.arange(values.shape[0]) * step + win_len // 2) / sampling_frequency
+    # Центры окон отсчитываются от начала моделирования; первое окно начинается с t = 0.
+    times = (np.arange(values.shape[0]) * step + win_len // 2) / sampling_frequency
     time_edges = bin_edges(times, step / sampling_frequency)
     freq_edges = bin_edges(freqs, sampling_frequency / nfft)
     freq_edges = np.clip(freq_edges, fmin, fmax)
@@ -518,8 +572,8 @@ def validate_config():
     if not np.isfinite([BASE_NOISE, SWEEP_NOISE]).all() or min(BASE_NOISE, SWEEP_NOISE) < 0:
         raise ValueError('Poisson noise rates must be finite and non-negative')
     max_rate = max(BASE_NOISE, SWEEP_NOISE * max(INFLUENCE_SCALES))
-    if discard < 0 or (t_total_sim - discard) * sampling_frequency < win_len:
-        raise ValueError('Not enough observations after discarding the transient')
+    if t_total_sim * sampling_frequency < win_len:
+        raise ValueError('Not enough observations for one analysis window')
     if not 0 <= fmin < fmax <= sampling_frequency / 2:
         raise ValueError('Invalid frequency band')
     if p_max < 1 or win_len - p_max <= 2 * p_max + 1:
@@ -543,6 +597,7 @@ if __name__ == '__main__':
     for seed_index in range(seeds):
         simulation_seed = seed_start + seed_index
         signed, external = make_topology(simulation_seed)
+        print_topology_connections(signed, simulation_seed)
         if PLOT_TOPOLOGY and (PLOT_SEED_INDEX is None or seed_index == PLOT_SEED_INDEX):
             plot_topology(signed, external, simulation_seed)
         values = np.empty((2, len(INFLUENCE_SCALES),
@@ -569,7 +624,7 @@ if __name__ == '__main__':
     if order == 0:
         for values in traces:
             for sw in range(2):
-                v = values[sw, base, round(discard * sampling_frequency):]
+                v = values[sw, base]
                 try:
                     _, p_all = choose_var_order(
                         v, win_len, step, p_max=p_max, criterion='BIC',

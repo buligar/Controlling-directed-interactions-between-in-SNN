@@ -114,7 +114,7 @@ def analyze_population_connectivity(
     measures = connectivity_spectra(weights, covariance, frequencies, fs)
 
     rng = np.random.default_rng(seed)
-    fourier = np.fft.rfft(y, axis=0)
+    fourier = np.fft.rfft(y, axis=0) # только положительные частоты спектра
     null_maxima = np.empty((n_surrogates, 3))
     for repetition in range(n_surrogates):
         phases = rng.uniform(0, 2 * np.pi, size=fourier.shape)
@@ -129,12 +129,34 @@ def analyze_population_connectivity(
 
     thresholds, significant = {}, {}
     for metric, name in enumerate(measures):
+        # Суррогатные максимумы выбранной метрики, форма (n_surrogates,).
+        # Каждый максимум взят по всем частотам и обоим направлениям:
+        # так в нулевом распределении учитывается поиск случайных пиков.
         maxima = null_maxima[:, metric]
+        # Максимумы исходной метрики по частотам отдельно для 1->2 и 2->1.
+        # measures[name] имеет форму (2, n_frequencies), observed — (2,).
         observed = measures[name].max(axis=1)
+        # Диагностика: индекс/название метрики, столбец суррогатных максимумов
+        # формы (n_surrogates, 1), два наблюдаемых максимума и формы массивов.
+        print(metric, name, maxima[:, None], observed)
+        print(maxima.shape, observed.shape)
+        # Общий для двух направлений порог из отсортированных максимумов.
+        # critical_rank считается с 1, индекс массива — с 0; при 199 суррогатах
+        # и alpha=0.05 это 197-й по возрастанию, то есть третий по величине.
         thresholds[name] = float(np.sort(maxima)[critical_rank - 1])
+        # Broadcasting сравнивает каждый суррогат с каждым направлением:
+        # (n_surrogates, 1) >= (2,) даёт матрицу (n_surrogates, 2).
+        # sum(axis=0) даёт для каждого направления число k суррогатных
+        # максимумов, которые >= наблюдаемого. (1+k)/(n_surrogates+1) —
+        # суррогатное p-значение с поправкой на конечное число суррогатов.
+        # Множитель 3 — поправка Бонферрони на GC/PDC/DTF; minimum(1, ...)
+        # ограничивает скорректированное p-значение сверху единицей.
+        print("Количество суррогатов, превышающих наблюдаемое:",(maxima[:, None] >= observed).sum(axis=0))
         p_values = np.minimum(
             1, 3 * (1 + (maxima[:, None] >= observed).sum(axis=0)) / (n_surrogates + 1)
         )
+        print("Суррогатные p-значения:", p_values)
+        # Два булевых решения: значимы ли направления 1->2 и 2->1 при alpha.
         significant[name] = p_values <= alpha
     return PopulationConnectivity(
         frequencies=frequencies, order=order, measures=measures,

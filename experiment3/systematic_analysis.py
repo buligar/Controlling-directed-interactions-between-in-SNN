@@ -155,14 +155,18 @@ def read_rows(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--amplitudes", type=float, nargs="+", default=[0, 50, 100, 200],
+    parser.add_argument("--amplitudes", type=float, nargs="+", default=[0, 50, 100, 200], # [0, 50, 100, 200]
                         help="Peak amplitudes of the harmonic current, pA.")
-    parser.add_argument("--noises", type=float, nargs="+", default=[0, 10, 50, 100],
+    parser.add_argument("--noises", type=float, nargs="+", default=[0, 10, 50, 100], # [0, 10, 50, 100]
                         help="Rate of each external Poisson source, Hz.")
-    parser.add_argument("--delays-ms", type=float, nargs="+", default=[-80, -40, -20, 0, 20, 40, 80])
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    parser.add_argument("--delays-ms", type=float, nargs="+", default=[-80, -40, -20, 0, 20, 40, 80]) # [-80, -40, -20, 0, 20, 40, 80]
+    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4]) # [0, 1, 2, 3, 4]
     parser.add_argument("--weight", type=float, default=3,
-                        help="Absolute internal synaptic voltage jump, mV.")
+                        help="Default internal synaptic voltage jump, mV.")
+    parser.add_argument("--intra-weight", type=float, default=3,
+                        help="Recurrent voltage jump, mV; defaults to --weight. 0 disables these synapses.")
+    parser.add_argument("--inter-weight", type=float, default=3,
+                        help="Interpopulation voltage jump, mV; defaults to --weight. 0 disables these synapses.")
     parser.add_argument("--external-probability", type=float, default=0.3)
     parser.add_argument("--external-weight", type=float, default=3,
                         help="External Poisson voltage jump, mV.")
@@ -173,7 +177,7 @@ def main(argv=None):
     parser.add_argument("--p-max", type=int, default=20)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--backend", choices=("cython", "numpy"), default="cython")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "experiment3_results")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "direction_results_harmonic")
     parser.add_argument("--report-only", action="store_true",
                         help="Redraw only the six maps using saved manifest.json and runs.csv.")
     args = parser.parse_args(argv)
@@ -204,7 +208,8 @@ def main(argv=None):
     base = LIFConfig(n_neurons=args.neurons, duration=args.duration, synaptic_weight=args.weight,
                      excitatory_fraction=args.excitatory_fraction,
                      external_connection_probability=args.external_probability,
-                     external_weight=args.external_weight)
+                     external_weight=args.external_weight,
+                     intra_weight=args.intra_weight, inter_weight=args.inter_weight)
     try:
         for delay in args.delays_ms:
             for noise in args.noises:
@@ -226,7 +231,7 @@ def main(argv=None):
         schema=SCHEMA, base_config=asdict(base), amplitudes_pA=args.amplitudes,
         noises_hz=args.noises, delays_ms=args.delays_ms, seeds=args.seeds,
         units=dict(rhythm_amplitude="pA", noise="Hz", synaptic_weight="mV",
-                   coupling_delay="s", external_weight="mV",),
+                   coupling_delay="s", external_weight="mV", intra_weight="mV", inter_weight="mV"),
         poisson_mean_compensated=False, drive=HARMONIC_DRIVE, burn_in_s=0.0,
         analysis=analysis, backend=args.backend, source_hashes=provenance,
     )

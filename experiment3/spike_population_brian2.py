@@ -6,7 +6,6 @@ import brian2 as b2
 import numpy as np
 from brian2.codegen.runtime.numpy_rt import NumpyCodeObject
 
-
 # Fixed LIF dynamics and recording settings; values use seconds, mV, pA, Mohm.
 INTEGRATION_DT = 0.0005
 RHYTHM_AMPLITUDE = 25.0
@@ -38,12 +37,14 @@ class LIFConfig:
     coupling_delay: float = -0.04  # s; sign chooses the rhythm-driven population
     intra_connection_probability: float = 0.15
     inter_connection_probability: float = 0.05
-    synaptic_weight: float = 3  # mV; approximately the previous 80 pA synapse's peak PSP
+    synaptic_weight: float = 3  # mV; default internal weight when an override is None
     noise: float = 50.0  # Hz per external Poisson source, equal in both populations
     seed: int = 0
     excitatory_fraction: float = 0.8  # Per population; all outgoing signs follow neuron type.
     external_connection_probability: float = 0.3
     external_weight: float = 3  # mV; excitatory external voltage jump
+    intra_weight: float | None = None  # mV; recurrent override, 0 disables these synapses
+    inter_weight: float | None = None  # mV; interpopulation override, 0 disables these synapses
 
     @property
     def n_excitatory(self):
@@ -66,6 +67,10 @@ def _validate(config):
         value = getattr(config, name)
         if not np.isfinite(value) or value < 0:
             raise ValueError(f"{name} must be finite and nonnegative.")
+    for name in ("intra_weight", "inter_weight"):
+        value = getattr(config, name)
+        if value is not None and (not np.isfinite(value) or value < 0):
+            raise ValueError(f"{name} must be finite and nonnegative, or None.")
     for name in (
         "intra_connection_probability", "inter_connection_probability", "excitatory_fraction",
         "external_connection_probability",
@@ -91,7 +96,7 @@ def _validate(config):
         raise ValueError("The spike bin must not be shorter than integration_dt.")
 
 
-def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
+def simulate_lif_populations(config=LIFConfig(), *, backend="numpy", return_topology=False):
     """Return population spike counts with shape (time bin, 2).
 
     Every contact is reciprocal with equal absolute weights and propagation delays.
@@ -107,6 +112,9 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     Postsynaptic integration can add further latency before firing. Each population
     also has reciprocal recurrent synapses without self-connections and with zero
     propagation delay. The full topology does not depend on the delay sign.
+    intra_weight and inter_weight independently override synaptic_weight for
+    recurrent and inter-population contacts. external_weight controls Poisson
+    input contacts. A zero weight skips creation of the corresponding synapses.
 
     A harmonic current A*sin(2*pi*f*t), with peak amplitude A and zero initial
     phase, drives only the source. It is evaluated at every integration step.
@@ -120,6 +128,11 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     The NumPy and Cython backends run the same equations with their own
     reproducible random streams. Spike counts are retained from time zero;
     the network runs for config.duration seconds without a discarded initial interval.
+
+    With return_topology=True, return (counts, signed, external), where signed
+    and external contain the actual internal and external synaptic weights in mV.
+    Both matrices have presynaptic sources in rows and postsynaptic neurons in
+    columns; population 1 precedes population 2.
     """
     _validate(config)
     if backend == "numpy":
@@ -130,6 +143,8 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     else:
         raise ValueError("backend must be numpy or cython.")
     n = config.n_neurons
+    intra_weight = config.synaptic_weight if config.intra_weight is None else config.intra_weight
+    inter_weight = config.synaptic_weight if config.inter_weight is None else config.inter_weight
     streams = _random_streams(config.seed)
     total_duration = config.duration
     source = 0 if config.coupling_delay >= 0 else 1
@@ -170,7 +185,7 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     for population in (0, 1):
         external_rng = np.random.default_rng(streams[f"external_{population + 1}"])
         pre, post = np.nonzero(external_rng.random((n, n)) < config.external_connection_probability)
-        if not pre.size:
+        if config.external_weight == 0 or not pre.size:
             continue
         projection = b2.Synapses(
             inputs, populations[population], model="weight : volt",
@@ -183,8 +198,9 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
         projection.pre.order = -2  # External events precede internal synaptic events.
         external_synapses.append(projection)
 
-    def create_synapses(source_population, target_population, pre, post, delays, name):
-        if not pre.size:
+
+    def create_synapses(source_population, target_population, pre, post, delays, name, *, weight):
+        if weight == 0 or not pre.size:
             return None
         projection = b2.Synapses(
             populations[source_population], populations[target_population], model="weight : volt",
@@ -192,10 +208,12 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
             name=name,
         )
         projection.connect(i=pre, j=post)
-        projection.weight = config.synaptic_weight * config.neuron_signs[pre] * b2.mV
+        projection.weight = weight * config.neuron_signs[pre] * b2.mV
         projection.delay = delays * b2.second
         projection.pre.order = -1
         return projection
+    
+
 
     # Draw each population-1/population-2 pair once and create both directions.
     # The sign of the delay only chooses which population receives the rhythm.
@@ -205,10 +223,10 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
     )
     pre, post = (population1, population2) if source == 0 else (population2, population1)
     synapses = create_synapses(
-        source, target, pre, post, delay, "lif_projection*",
+        source, target, pre, post, delay, "lif_projection*", weight=inter_weight,
     )
     reverse_synapses = create_synapses(
-        target, source, post, pre, delay, "lif_reverse_projection*",
+        target, source, post, pre, delay, "lif_reverse_projection*", weight=inter_weight,
     )
     recurrent_synapses = []
     for population in (0, 1):
@@ -218,6 +236,7 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
         pre, post = np.nonzero(connected)
         recurrent_synapses.append(create_synapses(
             population, population, pre, post, 0.0, f"lif_recurrent_{population + 1}*",
+            weight=intra_weight,
         ))
 
     spike_monitors = tuple(
@@ -241,4 +260,25 @@ def simulate_lif_populations(config=LIFConfig(), *, backend="numpy"):
         selected = (ticks >= 0) & (ticks < record_ticks)
         ticks = ticks[selected]
         np.add.at(counts[:, population], ticks // ticks_per_bin, 1)
+    if return_topology:
+        signed = np.zeros((2*n, 2*n), dtype=float)
+        external = np.zeros_like(signed)
+
+        def add_synapses(matrix, projection, pre_population, post_population):
+            if projection is None:
+                return
+            pre = np.asarray(projection.i[:], dtype=int) + pre_population*n
+            post = np.asarray(projection.j[:], dtype=int) + post_population*n
+            matrix[pre, post] = np.asarray(projection.weight[:] / b2.mV)
+
+        add_synapses(signed, synapses, source, target)
+        add_synapses(signed, reverse_synapses, target, source)
+        for population, projection in enumerate(recurrent_synapses):
+            add_synapses(signed, projection, population, population)
+        for population, neurons in enumerate(populations):
+            for projection in external_synapses:
+                if projection.target is neurons:
+                    # PoissonGroup already uses global source indices.
+                    add_synapses(external, projection, 0, population)
+        return counts, signed, external
     return counts
